@@ -1,43 +1,93 @@
 import { supabase } from './supabase';
 import type { License, LicenseStatus } from '@/types/license';
 
-export async function getLicense(userId: string): Promise<License | null> {
-  const { data, error } = await supabase
-    .from('licenses')
-    .select('*')
-    .eq('user_id', userId)
-    .single();
+// Check if Supabase is properly configured
+const isSupabaseConfigured = (): boolean => {
+  const url = import.meta.env.VITE_SUPABASE_URL;
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  return !!(url && key && url.includes('supabase'));
+};
 
-  if (error) {
-    console.error('Error fetching license:', error);
+// Create a default trial license for offline/unconfigured mode
+const createDefaultTrialLicense = (userId: string): License => {
+  const trialEndDate = new Date();
+  trialEndDate.setDate(trialEndDate.getDate() + 3);
+  
+  return {
+    id: 'local-trial',
+    user_id: userId,
+    license_type: 'trial',
+    license_key: null,
+    trial_start_date: new Date().toISOString(),
+    trial_end_date: trialEndDate.toISOString(),
+    expiry_date: null,
+    is_active: true,
+    activated_at: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+};
+
+export async function getLicense(userId: string): Promise<License | null> {
+  // If Supabase is not configured, return null (will trigger trial creation)
+  if (!isSupabaseConfigured()) {
+    console.warn('Supabase not configured, using local trial mode');
     return null;
   }
 
-  return data;
+  try {
+    const { data, error } = await supabase
+      .from('licenses')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (error) {
+      console.error('Error fetching license:', error);
+      return null;
+    }
+
+    return data;
+  } catch (err) {
+    console.error('License fetch failed:', err);
+    return null;
+  }
 }
 
 export async function createTrialLicense(userId: string): Promise<License | null> {
+  // If Supabase is not configured, return a local trial license
+  if (!isSupabaseConfigured()) {
+    console.warn('Supabase not configured, creating local trial license');
+    return createDefaultTrialLicense(userId);
+  }
+
   const trialEndDate = new Date();
   trialEndDate.setDate(trialEndDate.getDate() + 3);
 
-  const { data, error } = await supabase
-    .from('licenses')
-    .insert({
-      user_id: userId,
-      license_type: 'trial',
-      trial_start_date: new Date().toISOString(),
-      trial_end_date: trialEndDate.toISOString(),
-      is_active: true,
-    })
-    .select()
-    .single();
+  try {
+    const { data, error } = await supabase
+      .from('licenses')
+      .insert({
+        user_id: userId,
+        license_type: 'trial',
+        trial_start_date: new Date().toISOString(),
+        trial_end_date: trialEndDate.toISOString(),
+        is_active: true,
+      })
+      .select()
+      .single();
 
-  if (error) {
-    console.error('Error creating trial license:', error);
-    return null;
+    if (error) {
+      console.error('Error creating trial license:', error);
+      // Return local trial on error
+      return createDefaultTrialLicense(userId);
+    }
+
+    return data;
+  } catch (err) {
+    console.error('Trial license creation failed:', err);
+    return createDefaultTrialLicense(userId);
   }
-
-  return data;
 }
 
 // Master license keys that work without database
