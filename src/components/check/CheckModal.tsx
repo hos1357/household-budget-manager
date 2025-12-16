@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { JalaliDatePicker } from '@/components/ui/jalali-date-picker';
 import { formatCurrency, parseNumber, formatInputNumber } from '@/lib/format';
+import type { Check, CheckType, CheckStatus } from '@/types/check';
 
 interface CheckModalProps {
   isOpen: boolean;
@@ -177,6 +178,22 @@ export const CheckModal: React.FC<CheckModalProps> = ({ isOpen, onClose, onSave,
                   <SelectItem value="cancelled">لغو شده</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>تاریخ سررسید</Label>
+              <JalaliDatePicker
+                value={formData.dueDate}
+                onChange={(date) => setFormData({ ...formData, dueDate: date })}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>تاریخ صدور</Label>
+              <JalaliDatePicker
+                value={formData.issueDate}
+                onChange={(date) => setFormData({ ...formData, issueDate: date })}
+              />
             </div>
           </div>
 

@@ -19,7 +19,13 @@ const createSupabaseClient = (): SupabaseClient<Database> => {
       },
     } as unknown as SupabaseClient<Database>;
   }
-  return createClient<Database>(supabaseUrl, supabaseAnonKey);
+  return createClient<Database>(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: true,
+    },
+  });
 };
 
 export const supabase = createSupabaseClient();

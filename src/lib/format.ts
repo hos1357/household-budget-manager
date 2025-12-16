@@ -30,10 +30,12 @@ export const parseNumber = (str: string): number => {
     result = result.replace(new RegExp(arabicNumerals[i], 'g'), String(i));
   }
   
-  // Remove commas and spaces
+  // Remove commas, spaces, and Persian separators
   result = result.replace(/[,\s،]/g, '');
   
-  return parseInt(result, 10) || 0;
+  // Parse as float to preserve all digits, then convert to integer
+  const parsed = parseFloat(result);
+  return isNaN(parsed) ? 0 : Math.round(parsed);
 };
 
 // Format number with thousand separators while typing (for input fields)
