@@ -29,10 +29,10 @@ const createDefaultTrialLicense = (userId: string): License => {
 };
 
 export async function getLicense(userId: string): Promise<License | null> {
-  // If Supabase is not configured, return null (will trigger trial creation)
+  // If Supabase is not configured, return local trial
   if (!isSupabaseConfigured()) {
     console.warn('Supabase not configured, using local trial mode');
-    return null;
+    return createDefaultTrialLicense(userId);
   }
 
   try {
@@ -40,17 +40,23 @@ export async function getLicense(userId: string): Promise<License | null> {
       .from('licenses')
       .select('*')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (error) {
-      console.error('Error fetching license:', error);
+      // Network error or other issues - return local trial
+      console.warn('License fetch error, using local trial:', error.message);
+      return createDefaultTrialLicense(userId);
+    }
+
+    // No license found - return null to trigger creation
+    if (!data) {
       return null;
     }
 
     return data;
   } catch (err) {
-    console.error('License fetch failed:', err);
-    return null;
+    console.warn('License fetch failed, using local trial:', err);
+    return createDefaultTrialLicense(userId);
   }
 }
 
@@ -65,6 +71,19 @@ export async function createTrialLicense(userId: string): Promise<License | null
   trialEndDate.setDate(trialEndDate.getDate() + 3);
 
   try {
+    // First check if user exists in users table
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', userId)
+      .maybeSingle();
+
+    // If user doesn't exist or there's an error, return local trial
+    if (userError || !userData) {
+      console.warn('User not found in database, using local trial');
+      return createDefaultTrialLicense(userId);
+    }
+
     const { data, error } = await supabase
       .from('licenses')
       .insert({
@@ -78,14 +97,13 @@ export async function createTrialLicense(userId: string): Promise<License | null
       .single();
 
     if (error) {
-      console.error('Error creating trial license:', error);
-      // Return local trial on error
+      console.warn('Error creating trial license, using local trial:', error.message);
       return createDefaultTrialLicense(userId);
     }
 
     return data;
   } catch (err) {
-    console.error('Trial license creation failed:', err);
+    console.warn('Trial license creation failed, using local trial:', err);
     return createDefaultTrialLicense(userId);
   }
 }

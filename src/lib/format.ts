@@ -20,22 +20,27 @@ export const formatCompactCurrency = (amount: number): string => {
 };
 
 export const parseNumber = (str: string): number => {
+  if (!str || str.trim() === '') return 0;
+  
   // Convert Persian/Arabic numerals to English
   const persianNumerals = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
   const arabicNumerals = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
   
-  let result = str;
+  let result = String(str);
   for (let i = 0; i < 10; i++) {
-    result = result.replace(new RegExp(persianNumerals[i], 'g'), String(i));
-    result = result.replace(new RegExp(arabicNumerals[i], 'g'), String(i));
+    result = result.split(persianNumerals[i]).join(String(i));
+    result = result.split(arabicNumerals[i]).join(String(i));
   }
   
-  // Remove commas, spaces, and Persian separators
-  result = result.replace(/[,\s،]/g, '');
+  // Remove all non-digit characters (commas, spaces, Persian separators, etc.)
+  result = result.replace(/[^\d]/g, '');
   
-  // Parse as float to preserve all digits, then convert to integer
-  const parsed = parseFloat(result);
-  return isNaN(parsed) ? 0 : Math.round(parsed);
+  // Return 0 if empty after cleaning
+  if (result === '') return 0;
+  
+  // Parse as integer - Number() handles large numbers better than parseInt
+  const parsed = Number(result);
+  return isNaN(parsed) ? 0 : parsed;
 };
 
 // Format number with thousand separators while typing (for input fields)
