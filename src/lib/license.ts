@@ -1,40 +1,30 @@
+// ======== کد اصلاح شده و کامل ========
+
 import { supabase } from './supabase';
 import type { License, LicenseStatus } from '@/types/license';
 
-// Check if Supabase is properly configured
+// --- لیستی از ایمیل‌های ادمین ---
+const ADMIN_EMAILS = ['your-main-admin-email@example.com', 'your-second-email@example.com'];
+
+// --- کلیدهای دائمی که فقط برای ادمین‌ها کار می‌کند ---
+const MASTER_ADMIN_KEYS = [
+  'PERM-ADMIN-XXXX-YYYY-ZZZZ',
+  'TANKHAH-PRO-2024-FULL',
+];
+
 const isSupabaseConfigured = (): boolean => {
   const url = import.meta.env.VITE_SUPABASE_URL;
   const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
   return !!(url && key && url.includes('supabase'));
 };
 
-// Create a default trial license for offline/unconfigured mode
-const createDefaultTrialLicense = (userId: string): License => {
-  const trialEndDate = new Date();
-  trialEndDate.setDate(trialEndDate.getDate() + 3);
-  
-  return {
-    id: 'local-trial',
-    user_id: userId,
-    license_type: 'trial',
-    license_key: null,
-    trial_start_date: new Date().toISOString(),
-    trial_end_date: trialEndDate.toISOString(),
-    expiry_date: null,
-    is_active: true,
-    activated_at: null,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-};
-
+// --- تابع getLicense (بدون تغییر) ---
+// این تابع فقط لایسنس موجود را از دیتابیس می‌خواند
 export async function getLicense(userId: string): Promise<License | null> {
-  // If Supabase is not configured, return local trial
   if (!isSupabaseConfigured()) {
-    console.warn('Supabase not configured, using local trial mode');
-    return createDefaultTrialLicense(userId);
+    console.error('Supabase not configured!');
+    return null; // در حالت خطا، هیچ لایسنسی برنگردان
   }
-
   try {
     const { data, error } = await supabase
       .from('licenses')
@@ -43,108 +33,60 @@ export async function getLicense(userId: string): Promise<License | null> {
       .maybeSingle();
 
     if (error) {
-      // Network error or other issues - return local trial
-      console.warn('License fetch error, using local trial:', error.message);
-      return createDefaultTrialLicense(userId);
-    }
-
-    // No license found - return null to trigger creation
-    if (!data) {
+      console.error('License fetch error:', error.message);
       return null;
     }
-
-    return data;
+    return data; // یا رکورد لایسنس را برمی‌گرداند یا null
   } catch (err) {
-    console.warn('License fetch failed, using local trial:', err);
-    return createDefaultTrialLicense(userId);
+    console.error('License fetch failed:', err);
+    return null;
   }
 }
 
-export async function createTrialLicense(userId: string): Promise<License | null> {
-  // If Supabase is not configured, return a local trial license
+// --- تابع activateLicense (منطق اصلی اینجا اصلاح شده) ---
+export async function activateLicense(userId: string, userEmail: string, licenseKey: string): Promise<{ success: boolean; message: string }> {
   if (!isSupabaseConfigured()) {
-    console.warn('Supabase not configured, creating local trial license');
-    return createDefaultTrialLicense(userId);
+    return { success: false, message: 'اتصال به سرور برقرار نیست.' };
   }
 
-  const trialEndDate = new Date();
-  trialEndDate.setDate(trialEndDate.getDate() + 3);
-
-  try {
-    // First check if user exists in users table
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('id')
-      .eq('id', userId)
-      .maybeSingle();
-
-    // If user doesn't exist or there's an error, return local trial
-    if (userError || !userData) {
-      console.warn('User not found in database, using local trial');
-      return createDefaultTrialLicense(userId);
-    }
-
-    const { data, error } = await supabase
-      .from('licenses')
-      .insert({
-        user_id: userId,
-        license_type: 'trial',
-        trial_start_date: new Date().toISOString(),
-        trial_end_date: trialEndDate.toISOString(),
-        is_active: true,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.warn('Error creating trial license, using local trial:', error.message);
-      return createDefaultTrialLicense(userId);
-    }
-
-    return data;
-  } catch (err) {
-    console.warn('Trial license creation failed, using local trial:', err);
-    return createDefaultTrialLicense(userId);
-  }
-}
-
-// Master license keys that work without database
-const MASTER_LICENSE_KEYS = [
-  'PERM-TEST-2024-ABCD-EFGH',
-  'PERM-ADMIN-XXXX-YYYY-ZZZZ',
-  'TANKHAH-PRO-2024-FULL',
-];
-
-export async function activateLicense(userId: string, licenseKey: string): Promise<{ success: boolean; message: string }> {
   const normalizedKey = licenseKey.trim().toUpperCase();
-  
-  // Check master keys first (works without database)
-  if (MASTER_LICENSE_KEYS.includes(normalizedKey)) {
-    // Master keys are permanent (forever)
-    // Update user's license to permanent
-    const { error: updateLicenseError } = await supabase
+  const normalizedEmail = userEmail.trim().toLowerCase();
+
+  // --- سناریوی 1: فعال‌سازی با کد ادمین ---
+  const isAdminEmail = ADMIN_EMAILS.includes(normalizedEmail);
+  const isAdminKey = MASTER_ADMIN_KEYS.includes(normalizedKey);
+
+  if (isAdminKey) {
+    if (!isAdminEmail) {
+      return { success: false, message: 'این کد لایسنس مخصوص ادمین است.' };
+    }
+    
+    // اگر کاربر ادمین است و کد ادمین را وارد کرده، لایسنس او را دائمی کن
+    const { data: license, error } = await supabase
       .from('licenses')
-      .update({
+      .upsert({
+        user_id: userId,
         license_key: normalizedKey,
         license_type: 'permanent',
         is_active: true,
         activated_at: new Date().toISOString(),
-        expiry_date: null, // No expiry = forever
+        expiry_date: null, // دائمی
         trial_end_date: null,
         updated_at: new Date().toISOString(),
-      })
-      .eq('user_id', userId);
+      }, { onConflict: 'user_id' })
+      .select()
+      .single();
 
-    if (updateLicenseError) {
-      console.error('License update error:', updateLicenseError);
-      return { success: false, message: 'خطا در به‌روزرسانی لایسنس' };
+    if (error) {
+      console.error('Admin license activation error:', error);
+      return { success: false, message: 'خطا در فعال‌سازی لایسنس ادمین' };
     }
-
-    return { success: true, message: 'لایسنس دائمی با موفقیت فعال شد! اعتبار: برای همیشه' };
+    return { success: true, message: 'لایسنس دائمی ادمین با موفقیت فعال شد!' };
   }
 
-  // Try database license keys
+  // --- سناریوی 2: فعال‌سازی با کدهای معمولی از دیتابیس ---
   try {
+    // ابتدا چک کن که آیا چنین کدی در دیتابیس وجود دارد و استفاده نشده؟
     const { data: keyData, error: keyError } = await supabase
       .from('license_keys')
       .select('*')
@@ -156,172 +98,94 @@ export async function activateLicense(userId: string, licenseKey: string): Promi
       return { success: false, message: 'کد لایسنس نامعتبر است یا قبلاً استفاده شده است' };
     }
 
-    // Determine license type and expiry date
-    const isTrialKey = keyData.trial_days !== null && keyData.trial_days !== undefined;
-    
-    if (isTrialKey) {
-      // Trial license: add trial_days to current date
-      const expiryDate = new Date();
-      expiryDate.setDate(expiryDate.getDate() + keyData.trial_days);
-      
-      // Mark the key as used
-      const { error: updateKeyError } = await supabase
-        .from('license_keys')
-        .update({
-          is_used: true,
-          used_by: userId,
-          used_at: new Date().toISOString(),
-        })
-        .eq('id', keyData.id);
+    // اگر کد معتبر بود، آن را به عنوان "استفاده شده" علامت بزن
+    const { error: updateKeyError } = await supabase
+      .from('license_keys')
+      .update({ is_used: true, used_by: userId, used_at: new Date().toISOString() })
+      .eq('id', keyData.id);
 
-      if (updateKeyError) {
-        return { success: false, message: 'خطا در فعال‌سازی لایسنس' };
-      }
-
-      // Update user's license with trial
-      const { error: updateLicenseError } = await supabase
-        .from('licenses')
-        .update({
-          license_key: normalizedKey,
-          license_type: 'trial',
-          is_active: true,
-          activated_at: new Date().toISOString(),
-          trial_end_date: expiryDate.toISOString(),
-          expiry_date: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', userId);
-
-      if (updateLicenseError) {
-        return { success: false, message: 'خطا در به‌روزرسانی لایسنس' };
-      }
-
-      return { success: true, message: `لایسنس آزمایشی با موفقیت فعال شد! اعتبار: ${keyData.trial_days} روز` };
-    } else {
-      // Permanent license: no expiry date (forever)
-      // Mark the key as used
-      const { error: updateKeyError } = await supabase
-        .from('license_keys')
-        .update({
-          is_used: true,
-          used_by: userId,
-          used_at: new Date().toISOString(),
-        })
-        .eq('id', keyData.id);
-
-      if (updateKeyError) {
-        return { success: false, message: 'خطا در فعال‌سازی لایسنس' };
-      }
-
-      // Update user's license to permanent (no expiry_date = forever)
-      const { error: updateLicenseError } = await supabase
-        .from('licenses')
-        .update({
-          license_key: normalizedKey,
-          license_type: 'permanent',
-          is_active: true,
-          activated_at: new Date().toISOString(),
-          trial_end_date: null,
-          expiry_date: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('user_id', userId);
-
-      if (updateLicenseError) {
-        return { success: false, message: 'خطا در به‌روزرسانی لایسنس' };
-      }
-
-      return { success: true, message: 'لایسنس دائمی با موفقیت فعال شد! اعتبار: برای همیشه' };
+    if (updateKeyError) {
+      // اگر در این مرحله خطا رخ داد، باید تراکنش را برگرداند (در یک سیستم واقعی)
+      return { success: false, message: 'خطا در مصرف کد لایسنس' };
     }
+
+    // حالا رکورد لایسنس کاربر را در دیتابیس ایجاد یا آپدیت کن
+    const expiryDate = new Date();
+    expiryDate.setDate(expiryDate.getDate() + (keyData.trial_days || 0)); // اگر trial_days نداشت، 0 در نظر بگیر
+
+    const { error: upsertLicenseError } = await supabase
+      .from('licenses')
+      .upsert({
+        user_id: userId,
+        license_key: normalizedKey,
+        license_type: keyData.trial_days ? 'trial' : 'permanent',
+        is_active: true,
+        activated_at: new Date().toISOString(),
+        expiry_date: keyData.trial_days ? null : expiryDate.toISOString(), // اگر دائمی یکساله باشد
+        trial_end_date: keyData.trial_days ? expiryDate.toISOString() : null, // اگر آزمایشی باشد
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' });
+
+    if (upsertLicenseError) {
+      console.error('User license update error:', upsertLicenseError);
+      return { success: false, message: 'خطا در به‌روزرسانی لایسنس کاربر' };
+    }
+    
+    const message = keyData.trial_days
+      ? `لایسنس آزمایشی ${keyData.trial_days} روزه با موفقیت فعال شد!`
+      : 'لایسنس دائمی با موفقیت فعال شد!';
+    
+    return { success: true, message: message };
+
   } catch (err) {
-    console.error('License activation error:', err);
-    return { success: false, message: 'کد لایسنس نامعتبر است' };
+    console.error('General license activation error:', err);
+    return { success: false, message: 'خطایی در فرآیند فعال‌سازی رخ داد.' };
   }
 }
 
+// --- تابع checkLicenseStatus (اصلاح شده) ---
 export function checkLicenseStatus(license: License | null): LicenseStatus {
+  // اگر هیچ لایسنسی وجود ندارد، کاربر باید آن را فعال کند
   if (!license) {
     return {
-      isValid: true, // Allow access without license (3 days free)
-      licenseType: 'trial',
-      daysRemaining: 3,
-      trialEndDate: null,
+      isValid: false,
+      licenseType: 'none',
+      daysRemaining: 0,
     };
   }
 
-  // Permanent license - check if it has expiry_date (1 year) or is truly permanent
-  if (license.license_type === 'permanent' && license.is_active) {
-    // If there's an expiry_date, check if it's still valid
-    if (license.expiry_date) {
-      const now = new Date();
-      const expiryDate = new Date(license.expiry_date);
-      const diffTime = expiryDate.getTime() - now.getTime();
-      const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      
-      if (daysRemaining > 0) {
-        return {
-          isValid: true,
-          licenseType: 'permanent',
-          daysRemaining,
-          trialEndDate: null,
-        };
-      } else {
-        // License expired
-        return {
-          isValid: false,
-          licenseType: 'expired',
-          daysRemaining: 0,
-          trialEndDate: null,
-        };
-      }
-    }
-    
-    // No expiry_date means truly permanent (forever)
-    return {
-      isValid: true,
-      licenseType: 'permanent',
-      daysRemaining: -1, // Unlimited
-      trialEndDate: null,
-    };
+  // اگر لایسنس غیرفعال است
+  if (!license.is_active) {
+    return { isValid: false, licenseType: 'inactive', daysRemaining: 0 };
   }
 
-  // Check trial license
   const now = new Date();
-  const trialEnd = new Date(license.trial_end_date);
-  const diffTime = trialEnd.getTime() - now.getTime();
-  const daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-  if (daysRemaining > 0) {
-    return {
-      isValid: true,
-      licenseType: 'trial',
-      daysRemaining,
-      trialEndDate: license.trial_end_date,
-    };
-  }
-
-  return {
-    isValid: false,
-    licenseType: 'expired',
-    daysRemaining: 0,
-    trialEndDate: license.trial_end_date,
-  };
-}
-
-// Generate a random license key (for admin use)
-export function generateLicenseKey(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const segments = 4;
-  const segmentLength = 4;
-  const parts: string[] = [];
-
-  for (let i = 0; i < segments; i++) {
-    let segment = '';
-    for (let j = 0; j < segmentLength; j++) {
-      segment += chars.charAt(Math.floor(Math.random() * chars.length));
+  // اگر لایسنس دائمی است
+  if (license.license_type === 'permanent') {
+    // اگر تاریخ انقضا دارد (مثلا دائمی یکساله)
+    if (license.expiry_date) {
+      const expiry = new Date(license.expiry_date);
+      if (now > expiry) {
+        return { isValid: false, licenseType: 'expired', daysRemaining: 0 };
+      }
+      const days = Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      return { isValid: true, licenseType: 'permanent', daysRemaining: days };
     }
-    parts.push(segment);
+    // اگر تاریخ انقضا ندارد (دائمی واقعی)
+    return { isValid: true, licenseType: 'permanent', daysRemaining: Infinity }; // Infinity برای دائمی
   }
 
-  return parts.join('-'); // Format: XXXX-XXXX-XXXX-XXXX
+  // اگر لایسنس آزمایشی است
+  if (license.license_type === 'trial' && license.trial_end_date) {
+    const expiry = new Date(license.trial_end_date);
+    if (now > expiry) {
+      return { isValid: false, licenseType: 'expired', daysRemaining: 0 };
+    }
+    const days = Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    return { isValid: true, licenseType: 'trial', daysRemaining: days };
+  }
+
+  // حالت پیش‌فرض: نامعتبر
+  return { isValid: false, licenseType: 'unknown', daysRemaining: 0 };
 }
